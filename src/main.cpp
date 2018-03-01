@@ -86,13 +86,13 @@ int main() {
             // Sensor Fusion Data, a list of all other cars on the same side of the road.
             vector<vector<double>> sensor_fusion = j[1]["sensor_fusion"];
 
-            planner.localize(j, sensor_fusion);
-            planner.calculate_trajectory(j, map_waypoints_s, map_waypoints_x, map_waypoints_y);
+          planner.Localize(j, sensor_fusion);
+          planner.CalculateTrajectory(j, map_waypoints_s, map_waypoints_x, map_waypoints_y);
 
           	// TODO: define a path made up of (x,y) points that the car will visit sequentially every .02 seconds
             json msgJson;
-            msgJson["next_x"] = planner.getTrajectoryX();
-          	msgJson["next_y"] = planner.getTrajectoryY();
+            msgJson["next_x"] = planner.GetTrajectoryX();
+          	msgJson["next_y"] = planner.GetTrajectoryY();
 
           	auto msg = "42[\"control\","+ msgJson.dump()+"]";
 
