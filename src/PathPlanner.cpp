@@ -17,15 +17,11 @@ void PathPlanner::Localize(json &j, vector<vector<double>> &sensor_fusion)
   _car_yaw = j[1]["yaw"];
   _car_speed = j[1]["speed"];
   _sensor_fusion = sensor_fusion;
-
-  //std::cout << "speed: " << car_speed << std::endl;
-  //std::cout << "yaw: " << car_yaw << std::endl;
-
   _curr_lane_idx = CheckLaneIdx(_d_coord);
   _target_lane_idx = CheckLaneIdx(j[1]["end_path_d"]);
 }
 
-
+// calculates the trajectory and calls all necessary member functions, except Localize
 void PathPlanner::CalculateTrajectory(json &j, const vector<double> &map_waypoints_s,
                                       const vector<double> &map_waypoints_x,
                                       const vector<double> &map_waypoints_y)
@@ -38,17 +34,8 @@ void PathPlanner::CalculateTrajectory(json &j, const vector<double> &map_waypoin
   _next_x_vals = previous_path_x;
   _next_y_vals = previous_path_y;
 
-  /*
-  // Previous path's end s and d values
-  double end_path_s = j[1]["end_path_s"];
-  double end_path_d = j[1]["end_path_d"];
-   */
-
-  // TODO: fix acceleration issue
-
   _ref_vel = AdaptSpeed(_conflict_idx);
   tk::spline s = InterpolateSpline(j, map_waypoints_s, map_waypoints_x, map_waypoints_y);
-
 
   double increment_approx = ConvertSpeed2Increment(_ref_vel, 30, s(30));
 
@@ -84,10 +71,6 @@ int PathPlanner::CheckLaneConflict(int laneidx)
          _sensor_fusion[caridx][5] - _car_s < _safe_distance) {
       int lane_traffic = CheckLaneIdx(_sensor_fusion[caridx][6]);
       if (lane_traffic == laneidx) {
-        //std::cout << "Lane conflict detected: caridx: " << caridx << ", d value: "
-        //          << sensor_fusion[caridx][6] << std::endl;
-        //std::cout << "s value: " << sensor_fusion[caridx][5] << std::endl;
-
         obstacles.push_back(_sensor_fusion[caridx]);
       }
       _lane_conflict = laneidx == _curr_lane_idx ? true : false;
@@ -103,18 +86,12 @@ int PathPlanner::CheckLaneConflict(int laneidx)
       if (obstacles[caridx][5] - _car_s < dist) {
         dist = obstacles[caridx][5] - _car_s;
         nearest_car = static_cast<int>(obstacles[caridx][0]);
-        //std::cout << "car dist: " << dist << std::endl;
-        //std::cout << "nearest car: " << nearest_car << std::endl;
-        //std::cout << "my car s: " << car_s << std::endl;
-        //std::cout << "obstacle s: " << obstacles[caridx][5] << std::endl << std::endl;
       }
     }
     _actual_distance = dist;
     return nearest_car;
   }
-
   _lane_conflict = false;
-
   return -1;
 }
 
@@ -140,14 +117,14 @@ tk::spline PathPlanner::InterpolateSpline(json &j, const vector<double> &map_way
   vector<double> previous_path_x = j[1]["previous_path_x"];
   vector<double> previous_path_y = j[1]["previous_path_y"];
 
-  // spline interpolation
   vector<double> spline_x , spline_y ;
 
   unsigned long prev_size = previous_path_x.size();
-  // push last two points of previous path on spline point list if existant
+  // push last two points of previous path on spline point list if existent
   _ref_yaw = deg2rad(_car_yaw);
   _x_ref = _car_x;
   _y_ref = _car_y;
+  // this implementation assumes the reference frame at the tip of the current trajectory
   if (prev_size > 2) {
     double x1 = previous_path_x[prev_size - 1];
     double x0 = previous_path_x[prev_size - 2];
@@ -174,6 +151,7 @@ tk::spline PathPlanner::InterpolateSpline(json &j, const vector<double> &map_way
   // add points further away
   for (int dist : _dist_vec) {
     int d = 2 + (_target_lane_idx * 4);
+    // optional adaptation for higher speeds to smoothen trajectory
     //dist += _ref_vel > 15 ? 20 : 0;
     double s = _car_s + dist;
     vector<double> xy = getXY(s, d, map_waypoints_s, map_waypoints_x, map_waypoints_y);
@@ -181,7 +159,7 @@ tk::spline PathPlanner::InterpolateSpline(json &j, const vector<double> &map_way
     spline_y.push_back(xy[1]);
   }
 
-  // convert points to local frame at the tip of the current path
+  // convert points from global to local frame at the tip of the current path
   for (int i = 0; i < spline_x.size(); ++i) {
     vector<double> xy_trans = Map2LocalTransform(spline_x[i], spline_y[i], _x_ref, _y_ref, _ref_yaw);
     spline_x[i] = xy_trans[0];
@@ -194,7 +172,7 @@ tk::spline PathPlanner::InterpolateSpline(json &j, const vector<double> &map_way
   return s;
 }
 
-// converts points from global to local (car) reference frame
+// converts points from global to local (car/trajectory) reference frame
 vector<double> PathPlanner::Map2LocalTransform(double x_obs_glob, double y_obs_glob,
                                                double x_loc_ref, double y_loc_ref, double theta)
 {
@@ -215,6 +193,8 @@ vector<double> PathPlanner::Local2MapTransform(double x_obs_loc, double y_obs_lo
   return {x_map, y_map};
 }
 
+// handles speed control and initializes the search for a better lane if necessary
+// returns speed in m/s, conflict idx is result of CheckLaneConflict
 double PathPlanner::AdaptSpeed(int conflict_idx)
 {
   double ref_vel = Mph2Mps(_car_speed);
@@ -228,11 +208,12 @@ double PathPlanner::AdaptSpeed(int conflict_idx)
   } else if (_lane_conflict && _actual_distance <= _critical_distance) {
     ref_vel -= _max_acc;
     ConsiderLaneChange();
-    //std::cout << "following vehilce " << _conflict_idx <<" with speed "<< vel_obstacle <<"\n";
   }
   return ref_vel;
 }
 
+// converts the speed target in a position update with 20ms update rate
+// approximates the spline linearly
 // speed in m/s
 double PathPlanner::ConvertSpeed2Increment(double speed, double target_x, double target_y)
 {
@@ -242,7 +223,8 @@ double PathPlanner::ConvertSpeed2Increment(double speed, double target_x, double
   return target_x / N;
 }
 
-
+// examines the lane choices, calculates a cost for each option and chooses the lane
+// w/ lowest cost
 void PathPlanner::ConsiderLaneChange()
 {
   vector<int> lanes_to_check;
@@ -278,7 +260,7 @@ void PathPlanner::ConsiderLaneChange()
         break;
         // check if car is in that lane and faster but with not enough space to pull out
       } else if (obstacle_lane == lane && obstacle_vel > Mph2Mps(_car_speed) &&
-          (dist > _lane_change_dist_back && dist < _lane_change_dist_front)) {
+          (dist > - (obstacle_vel * 0.5) && dist < _lane_change_dist_front)) {
         lane_good = false;
         break;
         // if no knockout criteria is met, identify nearest car for following cost calc
