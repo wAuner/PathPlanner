@@ -59,7 +59,7 @@ private:
   double _critical_distance = 30;
   // in mph, converted to m/s
   double _max_speed = 49.2 * 1609./3600;
-  double _max_acc = 0.9;
+  double _max_acc = 0.8;
   int _n_points_traj = 30;
 
   vector<int> _dist_vec {40, 60, 90};
@@ -70,7 +70,7 @@ private:
   double _spline_start_x = 0;
   double _spline_start_y = 0;
 
-  double _cost_for_lane_change = 5;
+  double _cost_for_lane_change = 3;
   //========================================================
 
 
