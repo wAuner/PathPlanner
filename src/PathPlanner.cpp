@@ -44,34 +44,32 @@ void PathPlanner::CalculateTrajectory(json &j, const vector<double> &map_waypoin
   double end_path_d = j[1]["end_path_d"];
    */
 
-  unsigned long prev_size = previous_path_x.size();
-
-  double last_x_loc = 0;
-
-  // check if there are points from previous paths and if so, use them as starting point
-  if (not previous_path_x.empty()) {
-    // convert last point from global to local reference frame
-    last_x_loc = (previous_path_x.back() - _car_x) * cos(-deg2rad(_car_yaw))
-                        - (previous_path_y.back() - _car_y) * sin(-deg2rad(_car_yaw));
-  }
-
   // TODO: fix acceleration issue
 
-  double ref_vel = AdaptSpeed(_conflict_idx);
+  _ref_vel = AdaptSpeed(_conflict_idx);
   tk::spline s = InterpolateSpline(j, map_waypoints_s, map_waypoints_x, map_waypoints_y);
 
-  double increment = ConvertSpeed2Increment(ref_vel, 30, s(30));
+
+  double increment_approx = ConvertSpeed2Increment(_ref_vel, 30, s(30));
+
+  double last_x_loc = 0;
+  // check if there are points from previous paths and if so, use them as starting point
+  if (previous_path_x.size() > 2) {
+    // convert last point from global to local reference frame
+    last_x_loc = (previous_path_x.back() - _x_ref) * cos(-_ref_yaw)
+                 - (previous_path_y.back() - _y_ref) * sin(-_ref_yaw);
+  }
+  _points2calc = _n_points_traj - previous_path_x.size();
   for (int i=0; i < _points2calc; ++i) {
 
-    double x = last_x_loc + increment * (i + 1);
-    double y = s(x);
-
-    vector<double> xy_glob = Local2MapTransform(x, y, _car_x, _car_y, deg2rad(_car_yaw));
+    double x_loc = last_x_loc + increment_approx * (i + 1);
+    double y_loc = s(x_loc);
+    vector<double> xy_glob = Local2MapTransform(x_loc, y_loc, _x_ref, _y_ref, _ref_yaw);
 
     _next_x_vals.push_back(xy_glob[0]);
     _next_y_vals.push_back(xy_glob[1]);
   }
-  //std::cout << "\n\n";
+
 
 }
 
@@ -142,31 +140,54 @@ tk::spline PathPlanner::InterpolateSpline(json &j, const vector<double> &map_way
   vector<double> previous_path_x = j[1]["previous_path_x"];
   vector<double> previous_path_y = j[1]["previous_path_y"];
 
-  _points2calc = _n_points_traj - previous_path_x.size();
-
   // spline interpolation
-  vector<double> spline_x {_spline_start_x}, spline_y {_spline_start_y};
+  vector<double> spline_x , spline_y ;
 
   unsigned long prev_size = previous_path_x.size();
   // push last two points of previous path on spline point list if existant
-  if (not previous_path_x.empty()) {
-    // if previous path exists, use last two points
-    for (int i : {2, 1}) {
-      vector<double> point = Map2LocalTransform(previous_path_x[prev_size - i], previous_path_y[prev_size - i],
-                                                _car_x, _car_y, deg2rad(_car_yaw));
-      spline_x.push_back(point[0]);
-      spline_y.push_back(point[1]);
-    }
+  _ref_yaw = deg2rad(_car_yaw);
+  _x_ref = _car_x;
+  _y_ref = _car_y;
+  if (prev_size > 2) {
+    double x1 = previous_path_x[prev_size - 1];
+    double x0 = previous_path_x[prev_size - 2];
+    double y1 = previous_path_y[prev_size - 1];
+    double y0 = previous_path_y[prev_size - 2];
+
+    spline_x.push_back(x0);
+    spline_x.push_back(x1);
+
+    spline_y.push_back(y0);
+    spline_y.push_back(y1);
+
+    _ref_yaw = atan2(y1 - y0, x1 - x0);
+    _x_ref = x1;
+    _y_ref = y1;
+
+  } else {
+    spline_x.push_back(_car_x - cos(_ref_yaw));
+    spline_x.push_back(_car_x);
+
+    spline_y.push_back(_car_y - sin(_ref_yaw));
+    spline_y.push_back(_car_y);
   }
   // add points further away
   for (int dist : _dist_vec) {
     int d = 2 + (_target_lane_idx * 4);
+    //dist += _ref_vel > 15 ? 20 : 0;
     double s = _car_s + dist;
     vector<double> xy = getXY(s, d, map_waypoints_s, map_waypoints_x, map_waypoints_y);
-    vector<double> xy_trans = Map2LocalTransform(xy[0], xy[1], _car_x, _car_y, deg2rad(_car_yaw));
-    spline_x.push_back(xy_trans[0]);
-    spline_y.push_back(xy_trans[1]);
+    spline_x.push_back(xy[0]);
+    spline_y.push_back(xy[1]);
   }
+
+  // convert points to local frame at the tip of the current path
+  for (int i = 0; i < spline_x.size(); ++i) {
+    vector<double> xy_trans = Map2LocalTransform(spline_x[i], spline_y[i], _x_ref, _y_ref, _ref_yaw);
+    spline_x[i] = xy_trans[0];
+    spline_y[i] = xy_trans[1];
+  }
+
   tk::spline s;
 
   s.set_points(spline_x, spline_y);
@@ -200,7 +221,9 @@ double PathPlanner::AdaptSpeed(int conflict_idx)
   if (not _lane_conflict || _actual_distance > _safe_distance) {
     ref_vel += ref_vel + _max_acc > _max_speed ? _max_speed - ref_vel : _max_acc;
   } else if (_lane_conflict && _actual_distance <= _safe_distance) {
-    ref_vel = CalculateObstacleSpeed(_sensor_fusion[conflict_idx]);
+    if (ref_vel > CalculateObstacleSpeed(_sensor_fusion[conflict_idx])) {
+      ref_vel -= _max_acc;
+    }
     ConsiderLaneChange();
   } else if (_lane_conflict && _actual_distance <= _critical_distance) {
     ref_vel -= _max_acc;
@@ -215,32 +238,42 @@ double PathPlanner::ConvertSpeed2Increment(double speed, double target_x, double
 {
   double dist = sqrt(pow(target_x, 2) + pow(target_y, 2));
   double N = dist / (speed * 0.02);
-
+  
   return target_x / N;
 }
 
 
 void PathPlanner::ConsiderLaneChange()
 {
-  vector<int> lanesToCheck;
+  vector<int> lanes_to_check;
   if (_curr_lane_idx == 0 || _curr_lane_idx == 2) {
-    lanesToCheck.push_back(1);
+    lanes_to_check.push_back(1);
   } else if (_curr_lane_idx == 1) {
-    lanesToCheck.push_back(0);
-    lanesToCheck.push_back(2);
+    lanes_to_check.push_back(0);
+    lanes_to_check.push_back(2);
   }
 
-  for (int lane : lanesToCheck) {
+  // calculate costs for staying in lane
+  double cost_curr_lane = _max_speed - Mph2Mps(_car_speed) + 1 / _actual_distance;
+  double lowest_cost = cost_curr_lane;
+
+  // TODO: implement preference for emtpy lanes
+  vector<int> lanes_w_cost;
+  for (int lane : lanes_to_check) {
     bool lane_good = true;
+
+    double nearest_dist = 10e4;
+    double lane_speed = _max_speed;
+
     for (vector<double> vehicle : _sensor_fusion) {
       int obstacle_lane = CheckLaneIdx(vehicle[6]);
       double& obstacle_s = vehicle[5];
-      double obstacle_vel =CalculateObstacleSpeed(vehicle);
+      double obstacle_vel = CalculateObstacleSpeed(vehicle);
       double dist = obstacle_s - _car_s;
 
       // check if car in that lane is in front of us and slower
       if (obstacle_lane == lane && obstacle_vel < Mph2Mps(_car_speed) &&
-          dist > _lane_change_dist_back) {
+          (dist > _lane_change_dist_back && dist < 50)) {
         lane_good = false;
         break;
         // check if car is in that lane and faster but with not enough space to pull out
@@ -248,14 +281,39 @@ void PathPlanner::ConsiderLaneChange()
           (dist > _lane_change_dist_back && dist < _lane_change_dist_front)) {
         lane_good = false;
         break;
+        // if no knockout criteria is met, identify nearest car for following cost calc
+      } else if (obstacle_lane == lane && dist > 0 && dist < nearest_dist) {
+        //nearest_car_idx = vehicle[0];
+        nearest_dist = dist;
+        if (dist < 60) {
+          lane_speed = obstacle_vel;
+        }
+
       }
     }
     if (lane_good) {
-      _target_lane_idx = lane;
-      std::cout << "Changing lane to " << lane << std::endl;
+      double cost_lane_change = _max_speed - lane_speed + _cost_for_lane_change
+                                + 1 / nearest_dist;
+      if (cost_lane_change < lowest_cost) {
+        lowest_cost = cost_lane_change;
+        _target_lane_idx = lane;
+        std::cout << "Change lane to " << lane << std::endl;
+      }
     }
   }
   return;
+}
+
+double PathPlanner::CalculateWaypointDistance(const vector<double> &prev_x, const vector<double> &prev_y)
+{
+  int vector_size = prev_x.size();
+  const double& x0 = prev_x[vector_size - 2];
+  const double& x1 = prev_x[vector_size - 1];
+  const double& y0 = prev_x[vector_size - 2];
+  const double& y1 = prev_x[vector_size - 1];
+  double dist = sqrt(pow(x1 - x0, 2) + pow(y1 - y0, 2));
+
+  return dist;
 }
 
 

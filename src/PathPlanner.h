@@ -26,7 +26,10 @@ private:
   double _car_yaw;
   // speed in mph
   double _car_speed;
+  // target speed in m/s
+  double _ref_vel;
   double _actual_distance;
+  double _ref_yaw, _x_ref, _y_ref;
   // ["sensor_fusion"] A 2d vector of cars and then that car's
   // [0: car's unique ID,
   // 1: car's x position in map coordinates,
@@ -52,20 +55,22 @@ private:
   // parameters
   //========================================================
   //========================================================
-  double _safe_distance = 40;
+  double _safe_distance = 35;
   double _critical_distance = 30;
   // in mph, converted to m/s
   double _max_speed = 49.2 * 1609./3600;
-  double _max_acc = 1.5;
-  int _n_points_traj = 50;
+  double _max_acc = 0.9;
+  int _n_points_traj = 30;
 
-  vector<int> _dist_vec {30, 90, 120};
+  vector<int> _dist_vec {40, 60, 90};
 
   int _lane_change_dist_front = 10;
-  int _lane_change_dist_back = -5;
+  int _lane_change_dist_back = -10;
 
   double _spline_start_x = 0;
   double _spline_start_y = 0;
+
+  double _cost_for_lane_change = 5;
   //========================================================
 
 
@@ -96,6 +101,7 @@ private:
   vector<double> Local2MapTransform(double x_obs_loc, double y_obs_loc,
                                     double x_loc_ref, double y_loc_ref, double theta);
   double CalculateObstacleSpeed(const vector<double>& vehicle) { return sqrt(pow(vehicle[3],2) + pow(vehicle[4],2)); }
+  double CalculateWaypointDistance(const vector<double>& prev_x, const vector<double>& prev_y);
   //========================================================
 
 
