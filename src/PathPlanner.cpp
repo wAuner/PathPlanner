@@ -239,7 +239,6 @@ void PathPlanner::ConsiderLaneChange()
   double cost_curr_lane = _max_speed - Mph2Mps(_car_speed) + 1 / _actual_distance;
   double lowest_cost = cost_curr_lane;
 
-  // TODO: implement preference for emtpy lanes
   vector<int> lanes_w_cost;
   for (int lane : lanes_to_check) {
     bool lane_good = true;
@@ -265,7 +264,6 @@ void PathPlanner::ConsiderLaneChange()
         break;
         // if no knockout criteria is met, identify nearest car for following cost calc
       } else if (obstacle_lane == lane && dist > 0 && dist < nearest_dist) {
-        //nearest_car_idx = vehicle[0];
         nearest_dist = dist;
         if (dist < 60) {
           lane_speed = obstacle_vel;
